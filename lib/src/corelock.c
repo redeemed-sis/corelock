@@ -1,6 +1,7 @@
 // Local headers
 #include "corelock.h"
 
+#include <bits/time.h>
 #include <pthread.h>
 #include <sched.h>
 #include <stdatomic.h>
@@ -77,13 +78,37 @@ static void overrun_handler_ignore(struct cl_instanse_s *inst,
   return;
 }
 
+static void align_start_time(long alignment, struct timespec *aligned_start) {
+  struct timespec curr_rt;
+  clock_gettime(CLOCK_REALTIME, &curr_rt);
+  clock_gettime(CLOCK_MONOTONIC, aligned_start);
+
+  long offset = alignment - (curr_rt.tv_nsec % alignment);
+  aligned_start->tv_nsec += offset;
+
+  while (aligned_start->tv_nsec >= 1000000000L) {
+    aligned_start->tv_sec++;
+    aligned_start->tv_nsec -= 1000000000L;
+  }
+
+  clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, aligned_start, NULL);
+  clock_gettime(CLOCK_MONOTONIC, aligned_start);
+}
+
 static void *thread_fn(void *inst_arg) {
   struct timespec next_tick, curr_time;
   cl_instanse *inst = (cl_instanse *)inst_arg;
+  double stop_time = inst->attrs.stop_time;
+  int start_align = inst->attrs.start_align;
   size_t periond_ns = inst->attrs.period_us * 1000;
   void *res = NULL;
+  double curr_abs_stamp = 0.0;
+  const double one_tick_sec = (double)periond_ns * 1e-9;
 
-  clock_gettime(CLOCK_MONOTONIC, &inst->start_time);
+  if (start_align > 0)
+    align_start_time(start_align, &inst->start_time);
+  else
+    clock_gettime(CLOCK_MONOTONIC, &inst->start_time);
   next_tick = inst->start_time;
   while (!atomic_load_explicit(&inst->stop_flag, memory_order_acquire)) {
     next_tick.tv_nsec += periond_ns;
@@ -97,6 +122,14 @@ static void *thread_fn(void *inst_arg) {
     if (diff_nsecs(&curr_time, &next_tick) > 0) {
       inst->overrun_handler(inst, &curr_time, &next_tick);
       continue;
+    }
+    if (stop_time > 0) {
+      curr_abs_stamp += one_tick_sec;
+      if (curr_abs_stamp >= stop_time - 1e-7) {
+        fprintf(stderr, "Task is finishing, duration is %.6lf\n",
+                curr_abs_stamp);
+        goto fn_out;
+      }
     }
     clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next_tick, NULL);
   }
@@ -126,15 +159,15 @@ struct cl_instanse_s *cl_inst_create(cl_task task, void *arg,
   pthread_attr_setschedparam(th_attr, &param);
 
   switch (attrs->or_bh) {
-    case CL_OVERRUN_BH_NOTIFY:
-      inst->overrun_handler = overrun_handler_notify;
-      break;
-    case CL_OVERRUN_BH_IGNORE:
-      inst->overrun_handler = overrun_handler_ignore;
-      break;
-    case CL_OVERRUN_BH_STOP:
-      inst->overrun_handler = overrun_handler_stop;
-      break;
+  case CL_OVERRUN_BH_NOTIFY:
+    inst->overrun_handler = overrun_handler_notify;
+    break;
+  case CL_OVERRUN_BH_IGNORE:
+    inst->overrun_handler = overrun_handler_ignore;
+    break;
+  case CL_OVERRUN_BH_STOP:
+    inst->overrun_handler = overrun_handler_stop;
+    break;
   }
 
   return inst;

@@ -12,6 +12,7 @@ int default_main_attr(cl_task step_fn, void* step_arg, cl_attr_t* attrs, int arg
   char* endptr;
   int cpu = strtol(argv[1], &endptr, 10);
   cpu_set_t cpus;
+  CPU_ZERO(&cpus);
   CPU_SET(cpu, &cpus);
   attrs->cpu_mask = &cpus;
   attrs->cpu_mask_size = sizeof(cpus);

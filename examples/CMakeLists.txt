@@ -6,3 +6,6 @@ target_link_libraries(example_utils PRIVATE CoreLock::corelock)
 
 add_executable(dummy_rt dummy_rt.c)
 target_link_libraries(dummy_rt PRIVATE CoreLock::corelock example_utils)
+
+add_executable(basic_usage basic_usage.c)
+target_link_libraries(basic_usage PRIVATE CoreLock::corelock)
